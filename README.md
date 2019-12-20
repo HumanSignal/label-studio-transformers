@@ -1,2 +1,2 @@
-# LabelStudio backend for HuggingFace transformers
+# LabelStudio backend for [Transformers](https://github.com/huggingface/transformers)
 
