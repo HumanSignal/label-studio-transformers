@@ -24,7 +24,7 @@ class SpanLabeledTextDataset(Dataset):
         cls_token_at_end=False, sequence_a_segment_id=0, cls_token_segment_id=1, mask_padding_with_zero=True
     ):
         self.list_of_strings = list_of_strings
-        self.list_of_spans = list_of_spans
+        self.list_of_spans = list_of_spans or [[] * len(list_of_strings)]
         self.tokenizer = tokenizer
         self.cls_token = cls_token
         self.sep_token = sep_token
@@ -36,25 +36,30 @@ class SpanLabeledTextDataset(Dataset):
         self.cls_token_segment_id = cls_token_segment_id
         self.mask_padding_with_zero = mask_padding_with_zero
 
-        self.original_list_of_tokens, self.original_list_of_tags, tag_idx_map_ = self._prepare_data()
+        (self.original_list_of_tokens, self.original_list_of_tags, tag_idx_map_,
+         original_list_of_tokens_start_map) = self._prepare_data()
+
         if tag_idx_map is None:
             self.tag_idx_map = tag_idx_map_
         else:
             self.tag_idx_map = tag_idx_map
 
-        self.list_of_token_ids, self.list_of_label_ids, self.list_of_segment_ids = [], [], []
+        self.list_of_token_ids, self.list_of_label_ids, self.list_of_segment_ids, self.list_of_token_start_map = [], [], [], []
 
         for original_tokens, original_tags in zip(self.original_list_of_tokens, self.original_list_of_tags):
-            token_ids, label_ids, segment_ids = self._convert_to_features(original_tokens, original_tags, self.tag_idx_map)
+            token_ids, label_ids, segment_ids, token_start_map = self._convert_to_features(
+                original_tokens, original_tags, self.tag_idx_map, original_list_of_tokens_start_map)
             self.list_of_token_ids.append(token_ids)
             self.list_of_segment_ids.append(segment_ids)
             self.list_of_label_ids.append(label_ids)
+            self.list_of_token_start_map.append(token_start_map)
 
-    def _convert_to_features(self, words, labels, label_map):
-        tokens, label_ids = [], []
-        for word, label in zip(words, labels):
+    def _convert_to_features(self, words, labels, label_map, list_token_start_map):
+        tokens, label_ids, tokens_idx_map = [], [], []
+        for i, (word, label, token_start_map) in enumerate(zip(words, labels, list_token_start_map)):
             word_tokens = self.tokenizer.tokenize(word)
             tokens.extend(word_tokens)
+            tokens_idx_map.extend([token_start_map[i]] * len(word_tokens))
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
             label_ids.extend([label_map[label]] + [self.pad_token_label_id] * (len(word_tokens) - 1))
 
@@ -100,7 +105,7 @@ class SpanLabeledTextDataset(Dataset):
 
         token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
-        return token_ids, label_ids, segment_ids
+        return token_ids, label_ids, segment_ids, tokens_idx_map
 
     def _apply_tokenizer(self, original_tokens, original_tags):
         out_tokens, out_tags, out_maps = [], [], []
@@ -117,7 +122,7 @@ class SpanLabeledTextDataset(Dataset):
         return out_tokens, out_tags, out_maps
 
     def _prepare_data(self):
-        list_of_tokens, list_of_tags = [], []
+        list_of_tokens, list_of_tags, list_of_token_idx_maps = [], [], []
         tag_idx_map = {'O': 0}
         for text, spans in zip(self.list_of_strings, self.list_of_spans):
             if not text:
@@ -162,9 +167,10 @@ class SpanLabeledTextDataset(Dataset):
                 tags = ['O'] * len(tokens)
 
             list_of_tokens.append([t[0] for t in tokens])
+            list_of_token_idx_maps.append({i: t[1] for i, t in enumerate(tokens)})
             list_of_tags.append(tags)
 
-        return list_of_tokens, list_of_tags, tag_idx_map
+        return list_of_tokens, list_of_tags, tag_idx_map, list_of_token_idx_maps
 
     def __len__(self):
         return len(self.list_of_token_ids)
@@ -173,7 +179,8 @@ class SpanLabeledTextDataset(Dataset):
         return {
             'tokens': self.list_of_token_ids[idx],
             'labels': self.list_of_label_ids[idx],
-            'segments': self.list_of_segment_ids[idx]
+            'segments': self.list_of_segment_ids[idx],
+            'token_start_map': self.list_of_token_start_map[idx],
         }
 
     @property
@@ -185,7 +192,8 @@ class SpanLabeledTextDataset(Dataset):
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
         max_seq_length = max(map(len, (sample['tokens'] for sample in batch)))
-        batch_input_ids, batch_label_ids, batch_segment_ids, batch_input_mask = [], [], [], []
+        batch_input_ids, batch_label_ids, batch_segment_ids, batch_input_mask, batch_token_start_map = [], [], [], [], []
+        batch_token_idx_map, batch_original_token_start_map = [], []
         for sample in batch:
             input_ids = sample['tokens']
             label_ids = sample['labels']
@@ -208,12 +216,14 @@ class SpanLabeledTextDataset(Dataset):
             batch_label_ids.append(label_ids)
             batch_segment_ids.append(segment_ids)
             batch_input_mask.append(input_mask)
+            batch_token_start_map.append(sample['token_start_map'])
 
         return {
             'input_ids': torch.tensor(batch_input_ids, dtype=torch.long),
             'label_ids': torch.tensor(batch_label_ids, dtype=torch.long),
             'segment_ids': torch.tensor(batch_segment_ids, dtype=torch.long),
-            'input_mask': torch.tensor(batch_input_mask, dtype=torch.long)
+            'input_mask': torch.tensor(batch_input_mask, dtype=torch.long),
+            'token_start_map': batch_token_start_map
         }
 
 
@@ -224,14 +234,16 @@ class TransformersBasedTagger(TextTagger):
         self._tokenizer = BertTokenizer.from_pretrained(pretrained_model)
         self._model = BertForTokenClassification.from_pretrained(pretrained_model)
         self._batch_size = train_output['batch_size']
+        self._pad_token = self._tokenizer.convert_tokens_to_ids([self._tokenizer.pad_token])[0]
         self._pad_token_label_id = train_output['pad_token_label_id']
         self._label_map = train_output['label_map']
+        self._mask_padding_with_zero = True
 
         self._batch_padding = partial(
             SpanLabeledTextDataset.pad_sequences,
-            mask_padding_with_zero=True,
+            mask_padding_with_zero=self._mask_padding_with_zero,
             pad_on_left=False,
-            pad_token=self._tokenizer.convert_tokens_to_ids([self._tokenizer.pad_token])[0],
+            pad_token=self._pad_token,
             pad_token_segment_id=0,
             pad_token_label_id=self._pad_token_label_id
         )
@@ -255,14 +267,17 @@ class TransformersBasedTagger(TextTagger):
 
     def predict(self, tasks):
         texts = list(map(lambda i: i['input'][0], tasks))
-        predict_set = SpanLabeledTextDataset(texts)
+        predict_set = SpanLabeledTextDataset(texts, tokenizer=self._tokenizer)
+        from_name = self.output_names[0]
+        to_name = self.input_names[0]
         predict_loader = DataLoader(
             dataset=predict_set,
             batch_size=self._batch_size,
             collate_fn=self._batch_padding
         )
 
-        preds, out_label_ids = [], []
+        mask_padding_token = 1 - int(self._mask_padding_with_zero)
+        results = []
         for batch in tqdm(predict_loader, desc='Prediction'):
             inputs = {
                 'input_ids': batch['input_ids'],
@@ -271,21 +286,49 @@ class TransformersBasedTagger(TextTagger):
             }
             with torch.no_grad():
                 model_output = self._model(**inputs)
-                tmp_eval_loss, logits = model_output[:2]
+                logits = model_output[0]
 
             batch_preds = logits.detach().cpu().numpy()
             argmax_batch_preds = np.argmax(batch_preds, axis=-1)
-            preds.extend(argmax_batch_preds)
+            max_batch_preds = np.max(batch_preds, axis=-1)
+            input_mask = batch['input_mask'].detach().cpu().numpy()
+            batch_token_start_map = batch['token_start_map']
 
-        total_samples = len(out_label_ids)
-        preds_list = [[] for _ in range(total_samples)]
+            for max_preds, argmax_preds, mask_tokens, token_start_map in zip(
+                max_batch_preds, argmax_batch_preds, input_mask, batch_token_start_map
+            ):
+                preds, scores, starts = [], [], []
+                for max_pred, argmax_pred, mask_token, token_start in zip(max_preds, argmax_preds, mask_tokens, token_start_map):
+                    if mask_token != mask_padding_token:
+                        preds.append(self._label_map[argmax_pred])
+                        scores.append(max_pred)
+                        starts.append(token_start)
+                mean_score = np.mean(scores) if len(scores) > 0 else 0
 
-        for i in range(total_samples):
-            true_labels = out_label_ids[i] # TODO: use attention mask
-            for j in range(true_labels.shape[0]):
-                if true_labels[j] != self._pad_token_label_id:
-                    preds_list[i].append(self._label_map[preds[i][j]])
-        return self.make_results(tasks, list_of_spans, scores)
+                result = []
+
+                for label, group in groupby(zip(preds, starts, scores), key=lambda i: re.sub('^(B-|I-)', '', i[0])):
+                    _, group_starts, group_scores = group
+                    group_start = group_starts[0]
+                    if len(result) > 0:
+                        result[-1]['value']['end'] = group_start - 1
+                    if label != 'O':
+                        result.append({
+                            'from_name': from_name,
+                            'to_name': to_name,
+                            'type': 'labels',
+                            'value': {
+                                'labels': [label],
+                                'start': group_starts[0],
+                                'end': None
+                            }
+                        })
+                results.append({
+                    'result': result,
+                    'score': mean_score,
+                    'cluster': None
+                })
+        return results
 
 
 def train_ner(
@@ -332,7 +375,7 @@ def train_ner(
     ]
 
     num_training_steps = len(train_loader) * num_train_epochs
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=num_training_steps)
+    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
 
