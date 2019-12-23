@@ -46,9 +46,13 @@ class SpanLabeledTextDataset(Dataset):
 
         self.list_of_token_ids, self.list_of_label_ids, self.list_of_segment_ids, self.list_of_token_start_map = [], [], [], []
 
-        for original_tokens, original_tags in zip(self.original_list_of_tokens, self.original_list_of_tags):
+        for original_tokens, original_tags, original_token_start_map in zip(
+            self.original_list_of_tokens,
+            self.original_list_of_tags,
+            original_list_of_tokens_start_map
+        ):
             token_ids, label_ids, segment_ids, token_start_map = self._convert_to_features(
-                original_tokens, original_tags, self.tag_idx_map, original_list_of_tokens_start_map)
+                original_tokens, original_tags, self.tag_idx_map, original_token_start_map)
             self.list_of_token_ids.append(token_ids)
             self.list_of_segment_ids.append(segment_ids)
             self.list_of_label_ids.append(label_ids)
@@ -56,10 +60,10 @@ class SpanLabeledTextDataset(Dataset):
 
     def _convert_to_features(self, words, labels, label_map, list_token_start_map):
         tokens, label_ids, tokens_idx_map = [], [], []
-        for i, (word, label, token_start_map) in enumerate(zip(words, labels, list_token_start_map)):
+        for i, (word, label, token_start) in enumerate(zip(words, labels, list_token_start_map)):
             word_tokens = self.tokenizer.tokenize(word)
             tokens.extend(word_tokens)
-            tokens_idx_map.extend([token_start_map[i]] * len(word_tokens))
+            tokens_idx_map.extend([token_start] * len(word_tokens))
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
             label_ids.extend([label_map[label]] + [self.pad_token_label_id] * (len(word_tokens) - 1))
 
@@ -68,6 +72,7 @@ class SpanLabeledTextDataset(Dataset):
         if len(tokens) > self.max_seq_length - special_tokens_count:
             tokens = tokens[:(self.max_seq_length - special_tokens_count)]
             label_ids = label_ids[:(self.max_seq_length - special_tokens_count)]
+            tokens_idx_map = tokens_idx_map[:(self.max_seq_length - special_tokens_count)]
 
         # The convention in BERT is:
         # (a) For sequence pairs:
@@ -89,19 +94,23 @@ class SpanLabeledTextDataset(Dataset):
         # the entire model is fine-tuned.
         tokens += [self.sep_token]
         label_ids += [self.pad_token_label_id]
+        tokens_idx_map += [-1]
         if self.sep_token_extra:
             # roberta uses an extra separator b/w pairs of sentences
             tokens += [self.sep_token]
             label_ids += [self.pad_token_label_id]
+            tokens_idx_map += [-1]
         segment_ids = [self.sequence_a_segment_id] * len(tokens)
         if self.cls_token_at_end:
             tokens += [self.cls_token]
             label_ids += [self.pad_token_label_id]
             segment_ids += [self.cls_token_segment_id]
+            tokens_idx_map += [-1]
         else:
             tokens = [self.cls_token] + tokens
             label_ids = [self.pad_token_label_id] + label_ids
             segment_ids = [self.cls_token_segment_id] + segment_ids
+            tokens_idx_map = [-1] + tokens_idx_map
 
         token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
@@ -167,7 +176,7 @@ class SpanLabeledTextDataset(Dataset):
                 tags = ['O'] * len(tokens)
 
             list_of_tokens.append([t[0] for t in tokens])
-            list_of_token_idx_maps.append({i: t[1] for i, t in enumerate(tokens)})
+            list_of_token_idx_maps.append([t[1] for t in tokens])
             list_of_tags.append(tags)
 
         return list_of_tokens, list_of_tags, tag_idx_map, list_of_token_idx_maps
@@ -181,6 +190,7 @@ class SpanLabeledTextDataset(Dataset):
             'labels': self.list_of_label_ids[idx],
             'segments': self.list_of_segment_ids[idx],
             'token_start_map': self.list_of_token_start_map[idx],
+            'string': self.list_of_strings[idx]
         }
 
     @property
@@ -193,7 +203,7 @@ class SpanLabeledTextDataset(Dataset):
         # tokens are attended to.
         max_seq_length = max(map(len, (sample['tokens'] for sample in batch)))
         batch_input_ids, batch_label_ids, batch_segment_ids, batch_input_mask, batch_token_start_map = [], [], [], [], []
-        batch_token_idx_map, batch_original_token_start_map = [], []
+        batch_strings = []
         for sample in batch:
             input_ids = sample['tokens']
             label_ids = sample['labels']
@@ -217,13 +227,15 @@ class SpanLabeledTextDataset(Dataset):
             batch_segment_ids.append(segment_ids)
             batch_input_mask.append(input_mask)
             batch_token_start_map.append(sample['token_start_map'])
+            batch_strings.append(sample['string'])
 
         return {
             'input_ids': torch.tensor(batch_input_ids, dtype=torch.long),
             'label_ids': torch.tensor(batch_label_ids, dtype=torch.long),
             'segment_ids': torch.tensor(batch_segment_ids, dtype=torch.long),
             'input_mask': torch.tensor(batch_input_mask, dtype=torch.long),
-            'token_start_map': batch_token_start_map
+            'token_start_map': batch_token_start_map,
+            'strings': batch_strings
         }
 
 
@@ -247,23 +259,6 @@ class TransformersBasedTagger(TextTagger):
             pad_token_segment_id=0,
             pad_token_label_id=self._pad_token_label_id
         )
-
-    def _make_span(self, tokens, tags):
-        tokens = tokens[1:-1]
-        tags = tags[1:-1]
-        spans = []
-        for label, it in groupby(zip(tokens, tags), key=lambda i: re.sub('^(B-|I-)', '', i[1])):
-            toks, idx = list(zip(*(i[0] for i in it)))
-            substr = ' '.join(toks)
-            substr_start = idx[0]
-            if label != 'O':
-                spans.append({
-                    'start': substr_start,
-                    'end': substr_start + len(substr) - 1,
-                    'label': label,
-                    'substr': substr
-                })
-        return spans
 
     def predict(self, tasks):
         texts = list(map(lambda i: i['input'][0], tasks))
@@ -293,14 +288,15 @@ class TransformersBasedTagger(TextTagger):
             max_batch_preds = np.max(batch_preds, axis=-1)
             input_mask = batch['input_mask'].detach().cpu().numpy()
             batch_token_start_map = batch['token_start_map']
+            batch_strings = batch['strings']
 
-            for max_preds, argmax_preds, mask_tokens, token_start_map in zip(
-                max_batch_preds, argmax_batch_preds, input_mask, batch_token_start_map
+            for max_preds, argmax_preds, mask_tokens, token_start_map, string in zip(
+                max_batch_preds, argmax_batch_preds, input_mask, batch_token_start_map, batch_strings
             ):
                 preds, scores, starts = [], [], []
                 for max_pred, argmax_pred, mask_token, token_start in zip(max_preds, argmax_preds, mask_tokens, token_start_map):
-                    if mask_token != mask_padding_token:
-                        preds.append(self._label_map[argmax_pred])
+                    if token_start != -1:
+                        preds.append(self._label_map[str(argmax_pred)])
                         scores.append(max_pred)
                         starts.append(token_start)
                 mean_score = np.mean(scores) if len(scores) > 0 else 0
@@ -308,8 +304,7 @@ class TransformersBasedTagger(TextTagger):
                 result = []
 
                 for label, group in groupby(zip(preds, starts, scores), key=lambda i: re.sub('^(B-|I-)', '', i[0])):
-                    _, group_starts, group_scores = group
-                    group_start = group_starts[0]
+                    _, group_start, _ = list(group)[0]
                     if len(result) > 0:
                         result[-1]['value']['end'] = group_start - 1
                     if label != 'O':
@@ -319,10 +314,12 @@ class TransformersBasedTagger(TextTagger):
                             'type': 'labels',
                             'value': {
                                 'labels': [label],
-                                'start': group_starts[0],
+                                'start': group_start,
                                 'end': None
                             }
                         })
+                if result and result[-1]['value']['end'] is None:
+                    result[-1]['value']['end'] = len(string)
                 results.append({
                     'result': result,
                     'score': mean_score,
