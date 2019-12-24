@@ -1,8 +1,8 @@
 version: "3.5"
 
 services:
-  redis:
-    container_name: redis
+  redis_custom:
+    container_name: redis_custom
     image: redis:alpine
     hostname: redis
     volumes:
@@ -13,16 +13,16 @@ services:
     container_name: model_server
     environment:
       - RQ_QUEUE_NAME=model_server
-      - REDIS_HOST=redis
+      - REDIS_HOST=redis_custom
       - REDIS_PORT=6379
       - pretrained_model=bert-base-uncased
     build:
       context: .
     ports:
-      - 9090:9090
+      - 10315:9090
     depends_on:
-      - redis
+      - redis_custom
     links:
-      - redis
+      - redis_custom
     volumes:
       - "./storage/data:/root/.heartex"

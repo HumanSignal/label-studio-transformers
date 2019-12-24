@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import re
+import os
+import io
 
 from functools import partial
 from itertools import groupby
@@ -44,34 +46,46 @@ class SpanLabeledTextDataset(Dataset):
         else:
             self.tag_idx_map = tag_idx_map
 
-        self.list_of_token_ids, self.list_of_label_ids, self.list_of_segment_ids, self.list_of_token_start_map = [], [], [], []
+        (self.list_of_tokens, self.list_of_token_ids, self.list_of_labels, self.list_of_label_ids,
+         self.list_of_segment_ids, self.list_of_token_start_map) = [], [], [], [], [], []
 
         for original_tokens, original_tags, original_token_start_map in zip(
             self.original_list_of_tokens,
             self.original_list_of_tags,
             original_list_of_tokens_start_map
         ):
-            token_ids, label_ids, segment_ids, token_start_map = self._convert_to_features(
+            tokens, token_ids, labels, label_ids, segment_ids, token_start_map = self._convert_to_features(
                 original_tokens, original_tags, self.tag_idx_map, original_token_start_map)
             self.list_of_token_ids.append(token_ids)
+            self.list_of_tokens.append(tokens)
+            self.list_of_labels.append(labels)
             self.list_of_segment_ids.append(segment_ids)
             self.list_of_label_ids.append(label_ids)
             self.list_of_token_start_map.append(token_start_map)
 
+    def dump(self, output_file):
+        with io.open(output_file, mode='w') as f:
+            for tokens, labels in zip(self.list_of_tokens, self.list_of_labels):
+                for token, label in zip(tokens, labels):
+                    f.write(f'{token} {label}\n')
+                f.write('\n')
+
     def _convert_to_features(self, words, labels, label_map, list_token_start_map):
-        tokens, label_ids, tokens_idx_map = [], [], []
+        tokens, out_labels, label_ids, tokens_idx_map = [], [], [], []
         for i, (word, label, token_start) in enumerate(zip(words, labels, list_token_start_map)):
             word_tokens = self.tokenizer.tokenize(word)
             tokens.extend(word_tokens)
             tokens_idx_map.extend([token_start] * len(word_tokens))
             # Use the real label id for the first token of the word, and padding ids for the remaining tokens
             label_ids.extend([label_map[label]] + [self.pad_token_label_id] * (len(word_tokens) - 1))
+            out_labels.extend([label] + ['X'] * (len(word_tokens) - 1))
 
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
         special_tokens_count = 3 if self.sep_token_extra else 2
         if len(tokens) > self.max_seq_length - special_tokens_count:
             tokens = tokens[:(self.max_seq_length - special_tokens_count)]
             label_ids = label_ids[:(self.max_seq_length - special_tokens_count)]
+            out_labels = out_labels[:(self.max_seq_length - special_tokens_count)]
             tokens_idx_map = tokens_idx_map[:(self.max_seq_length - special_tokens_count)]
 
         # The convention in BERT is:
@@ -94,27 +108,31 @@ class SpanLabeledTextDataset(Dataset):
         # the entire model is fine-tuned.
         tokens += [self.sep_token]
         label_ids += [self.pad_token_label_id]
+        out_labels += ['X']
         tokens_idx_map += [-1]
         if self.sep_token_extra:
             # roberta uses an extra separator b/w pairs of sentences
             tokens += [self.sep_token]
             label_ids += [self.pad_token_label_id]
+            out_labels += ['X']
             tokens_idx_map += [-1]
         segment_ids = [self.sequence_a_segment_id] * len(tokens)
         if self.cls_token_at_end:
             tokens += [self.cls_token]
             label_ids += [self.pad_token_label_id]
+            out_labels += ['X']
             segment_ids += [self.cls_token_segment_id]
             tokens_idx_map += [-1]
         else:
             tokens = [self.cls_token] + tokens
             label_ids = [self.pad_token_label_id] + label_ids
+            out_labels = ['X'] + out_labels
             segment_ids = [self.cls_token_segment_id] + segment_ids
             tokens_idx_map = [-1] + tokens_idx_map
 
         token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
-        return token_ids, label_ids, segment_ids, tokens_idx_map
+        return tokens, token_ids, out_labels, label_ids, segment_ids, tokens_idx_map
 
     def _apply_tokenizer(self, original_tokens, original_tags):
         out_tokens, out_tags, out_maps = [], [], []
@@ -260,7 +278,7 @@ class TransformersBasedTagger(TextTagger):
             pad_token_label_id=self._pad_token_label_id
         )
 
-    def predict(self, tasks):
+    def predict(self, tasks, **kwargs):
         texts = list(map(lambda i: i['input'][0], tasks))
         predict_set = SpanLabeledTextDataset(texts, tokenizer=self._tokenizer)
         from_name = self.output_names[0]
@@ -322,7 +340,7 @@ class TransformersBasedTagger(TextTagger):
                     result[-1]['value']['end'] = len(string)
                 results.append({
                     'result': result,
-                    'score': mean_score,
+                    'score': float(mean_score),
                     'cluster': None
                 })
         return results
@@ -331,8 +349,11 @@ class TransformersBasedTagger(TextTagger):
 def train_ner(
     input_data, output_model_dir, pretrained_model,
     batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=3, weight_decay=0.0, logging_steps=10,
-    warmup_steps=0, save_steps=50,
+    warmup_steps=0, save_steps=50, dump_dataset=True,
     **kwargs):
+
+    cache_dir = os.path.expanduser('~/.heartex/cache')
+    os.makedirs(cache_dir, exist_ok=True)
 
     # read input data stream
     texts, list_of_spans = [], []
@@ -341,8 +362,12 @@ def train_ner(
         list_of_spans.append(item['output'])
 
     pad_token_label_id = CrossEntropyLoss().ignore_index
-    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
     train_set = SpanLabeledTextDataset(texts, list_of_spans, tokenizer, pad_token_label_id=pad_token_label_id)
+
+    if dump_dataset:
+        dataset_file = os.path.join(output_model_dir, 'train_set.txt')
+        train_set.dump(dataset_file)
 
     batch_padding = partial(
         SpanLabeledTextDataset.pad_sequences,
@@ -359,10 +384,10 @@ def train_ner(
         shuffle=True,
         collate_fn=batch_padding
     )
-    config = BertConfig.from_pretrained(pretrained_model)
+    config = BertConfig.from_pretrained(pretrained_model, cache_dir=cache_dir)
     config.num_labels = train_set.num_labels
 
-    model = BertForTokenClassification.from_pretrained(pretrained_model, config=config)
+    model = BertForTokenClassification.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
 
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
