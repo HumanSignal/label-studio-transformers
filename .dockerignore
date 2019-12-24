@@ -1,0 +1,16 @@
+.git
+.idea
+.ipynb_checkpoints
+notebooks
+unused
+Dockerfile
+.DS_Store
+.gitignore
+README.md
+env.*
+devops
+
+# To prevent storing dev/temporary container data, local storage & runs
+tmp
+storage
+runs

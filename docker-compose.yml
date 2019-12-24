@@ -1,28 +1,48 @@
 version: "3.5"
 
 services:
-  redis_custom:
-    container_name: redis_custom
+
+  label-studio:
+    container_name: label-studio
+    image: label-studio:latest
+    env_file:
+      - args
+    build:
+      context: "https://github.com/heartexlabs/label-studio.git"
+    ports:
+      - 8200:8200
+    command: -i ${input_data} -l ${config} -c /data/config/config.json
+    volumes:
+      - "./storage/label-studio:/data"
+    links:
+      - model
+
+  redis:
+    container_name: redis
     image: redis:alpine
     hostname: redis
     volumes:
       - "./storage/redis:/data"
-    expose:
-      - 6379
-  model_server:
-    container_name: model_server
+    ports:
+      - 6379:6379
+
+  model:
+    container_name: model
+    env_file:
+      - args
     environment:
-      - RQ_QUEUE_NAME=model_server
-      - REDIS_HOST=redis_custom
+      - RQ_QUEUE_NAME=model
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - pretrained_model=bert-base-uncased
+      - pretrained_model=${pretrained_model}
+    image: model:latest
     build:
       context: .
     ports:
-      - 10315:9090
+      - 9090:9090
     depends_on:
-      - redis_custom
+      - redis
     links:
-      - redis_custom
+      - redis
     volumes:
-      - "./storage/data:/root/.heartex"
+      - "./storage/model:/data"

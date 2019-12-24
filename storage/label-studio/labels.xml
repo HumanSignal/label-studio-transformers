@@ -1,0 +1,10 @@
+<View>
+  <Labels name="named_entity" toName="text">
+    <Label value="PER"></Label>
+      <Label value="ORG"></Label>
+      <Label value="LOC"></Label>
+      <Label value="MISC"></Label>
+      <Label value="DATE"></Label>
+  </Labels>
+  <Text name="text" value="$text"></Text>
+</View>
