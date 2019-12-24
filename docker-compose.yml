@@ -5,8 +5,6 @@ services:
   label-studio:
     container_name: label-studio
     image: label-studio:latest
-    env_file:
-      - args
     build:
       context: "https://github.com/heartexlabs/label-studio.git"
     ports:
@@ -28,8 +26,6 @@ services:
 
   model:
     container_name: model
-    env_file:
-      - args
     environment:
       - RQ_QUEUE_NAME=model
       - REDIS_HOST=redis
