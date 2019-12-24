@@ -28,7 +28,7 @@ Create environmental variable with model:
     export pretrained_model=bert_base_uncased
     ```
 
-4. Start docker container with environmental variables:
+4. Start docker container:
     ```bash
     docker-compose up
     ```
