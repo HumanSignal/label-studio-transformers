@@ -9,6 +9,8 @@ Dockerfile
 README.md
 env.*
 devops
+__pycache__
+docker-compose.yml
 
 # To prevent storing dev/temporary container data, local storage & runs
 tmp

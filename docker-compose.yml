@@ -14,6 +14,8 @@ services:
       - "./storage/label-studio:/data"
     links:
       - model
+    depends_on:
+      - model
 
   redis:
     container_name: redis
@@ -30,7 +32,8 @@ services:
       - RQ_QUEUE_NAME=model
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - pretrained_model=${pretrained_model}
+      - pretrained_model=${pretrained_model:-bert-base-uncased}
+      - cache_dir=/data/pretrained_model_cache
     image: model:latest
     build:
       context: .

@@ -24,8 +24,8 @@ from htx.base_model import TextTagger
 
 
 ALL_MODELS = sum(
-    (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)),
-    ())
+    [list(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)],
+    [])
 
 MODEL_CLASSES = {
     'bert': (BertConfig, BertForTokenClassification, BertTokenizer),
@@ -388,7 +388,7 @@ class TransformersBasedTagger(TextTagger):
 
 
 def train_ner(
-    input_data, output_model_dir, model_type='bert', pretrained_model='bert_base_uncased',
+    input_data, output_model_dir, model_type='bert', pretrained_model='bert-base-uncased',
     batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=3, weight_decay=0.0, logging_steps=10,
     warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache',
     **kwargs):
@@ -398,7 +398,7 @@ def train_ner(
 
     model_type = model_type.lower()
     assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
-    assert pretrained_model in ALL_MODELS.keys(), f'Pretrained model {model_type} not in {ALL_MODELS}'
+    assert pretrained_model in ALL_MODELS, f'Pretrained model {pretrained_model} not in {ALL_MODELS}'
 
     config_class, model_class, tokenizer_class = MODEL_CLASSES[model_type]
     tokenizer = tokenizer_class.from_pretrained(pretrained_model, cache_dir=cache_dir)
