@@ -12,10 +12,27 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm, trange
 from tensorboardX import SummaryWriter
 
-from transformers import BertTokenizer, BertForTokenClassification, BertConfig
+from transformers import (
+    BertTokenizer, BertForTokenClassification, BertConfig,
+    RobertaConfig, RobertaForTokenClassification, RobertaTokenizer,
+    DistilBertConfig, DistilBertForTokenClassification, DistilBertTokenizer,
+    CamembertConfig, CamembertForTokenClassification, CamembertTokenizer
+)
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from htx.base_model import TextTagger
+
+
+ALL_MODELS = sum(
+    (tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)),
+    ())
+
+MODEL_CLASSES = {
+    'bert': (BertConfig, BertForTokenClassification, BertTokenizer),
+    'roberta': (RobertaConfig, RobertaForTokenClassification, RobertaTokenizer),
+    'distilbert': (DistilBertConfig, DistilBertForTokenClassification, DistilBertTokenizer),
+    'camembert': (CamembertConfig, CamembertForTokenClassification, CamembertTokenizer),
+}
 
 
 class SpanLabeledTextDataset(Dataset):
@@ -62,6 +79,19 @@ class SpanLabeledTextDataset(Dataset):
             self.list_of_segment_ids.append(segment_ids)
             self.list_of_label_ids.append(label_ids)
             self.list_of_token_start_map.append(token_start_map)
+
+    def get_params_dict(self):
+        return {
+            'cls_token': self.cls_token,
+            'sep_token': self.sep_token,
+            'pad_token_label_id': self.pad_token_label_id,
+            'max_seq_length': self.max_seq_length,
+            'sep_token_extra': self.sep_token_extra,
+            'cls_token_at_end': self.cls_token_at_end,
+            'sequence_a_segment_id': self.sequence_a_segment_id,
+            'cls_token_segment_id': self.cls_token_segment_id,
+            'mask_padding_with_zero': self.mask_padding_with_zero
+        }
 
     def dump(self, output_file):
         with io.open(output_file, mode='w') as f:
@@ -256,31 +286,40 @@ class SpanLabeledTextDataset(Dataset):
             'strings': batch_strings
         }
 
+    @classmethod
+    def get_padding_function(cls, model_type, tokenizer, pad_token_label_id):
+        return partial(
+            cls.pad_sequences,
+            mask_padding_with_zero=True,
+            pad_on_left=model_type in ['xlnet'],
+            pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
+            pad_token_segment_id=4 if model_type in ['xlnet'] else 0,
+            pad_token_label_id=pad_token_label_id
+        )
+
 
 class TransformersBasedTagger(TextTagger):
 
     def load(self, train_output):
         pretrained_model = train_output['model_path']
-        self._tokenizer = BertTokenizer.from_pretrained(pretrained_model)
-        self._model = BertForTokenClassification.from_pretrained(pretrained_model)
+        self._model_type = train_output['model_type']
+        _, model_class, tokenizer_class = MODEL_CLASSES[train_output['model_type']]
+
+        self._tokenizer = tokenizer_class.from_pretrained(pretrained_model)
+        self._model = model_class.from_pretrained(pretrained_model)
         self._batch_size = train_output['batch_size']
         self._pad_token = self._tokenizer.convert_tokens_to_ids([self._tokenizer.pad_token])[0]
         self._pad_token_label_id = train_output['pad_token_label_id']
         self._label_map = train_output['label_map']
         self._mask_padding_with_zero = True
+        self._dataset_params_dict = train_output['dataset_params_dict']
 
-        self._batch_padding = partial(
-            SpanLabeledTextDataset.pad_sequences,
-            mask_padding_with_zero=self._mask_padding_with_zero,
-            pad_on_left=False,
-            pad_token=self._pad_token,
-            pad_token_segment_id=0,
-            pad_token_label_id=self._pad_token_label_id
-        )
+        self._batch_padding = SpanLabeledTextDataset.get_padding_function(
+            self._model_type, self._tokenizer, self._pad_token_label_id)
 
     def predict(self, tasks, **kwargs):
         texts = list(map(lambda i: i['input'][0], tasks))
-        predict_set = SpanLabeledTextDataset(texts, tokenizer=self._tokenizer)
+        predict_set = SpanLabeledTextDataset(texts, tokenizer=self._tokenizer, **self._dataset_params_dict)
         from_name = self.output_names[0]
         to_name = self.input_names[0]
         predict_loader = DataLoader(
@@ -289,7 +328,6 @@ class TransformersBasedTagger(TextTagger):
             collate_fn=self._batch_padding
         )
 
-        mask_padding_token = 1 - int(self._mask_padding_with_zero)
         results = []
         for batch in tqdm(predict_loader, desc='Prediction'):
             inputs = {
@@ -297,6 +335,8 @@ class TransformersBasedTagger(TextTagger):
                 'attention_mask': batch['input_mask'],
                 'token_type_ids': batch['segment_ids']
             }
+            if self._model_type == 'distilbert':
+                inputs.pop('token_type_ids')
             with torch.no_grad():
                 model_output = self._model(**inputs)
                 logits = model_output[0]
@@ -346,14 +386,22 @@ class TransformersBasedTagger(TextTagger):
         return results
 
 
+
 def train_ner(
-    input_data, output_model_dir, pretrained_model,
+    input_data, output_model_dir, model_type='bert', pretrained_model='bert_base_uncased',
     batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=3, weight_decay=0.0, logging_steps=10,
-    warmup_steps=0, save_steps=50, dump_dataset=True,
+    warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache',
     **kwargs):
 
-    cache_dir = os.path.expanduser('~/.heartex/cache')
+    cache_dir = os.path.expanduser(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
+
+    model_type = model_type.lower()
+    assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
+    assert pretrained_model in ALL_MODELS.keys(), f'Pretrained model {model_type} not in {ALL_MODELS}'
+
+    config_class, model_class, tokenizer_class = MODEL_CLASSES[model_type]
+    tokenizer = tokenizer_class.from_pretrained(pretrained_model, cache_dir=cache_dir)
 
     # read input data stream
     texts, list_of_spans = [], []
@@ -362,21 +410,22 @@ def train_ner(
         list_of_spans.append(item['output'])
 
     pad_token_label_id = CrossEntropyLoss().ignore_index
-    tokenizer = BertTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
-    train_set = SpanLabeledTextDataset(texts, list_of_spans, tokenizer, pad_token_label_id=pad_token_label_id)
+    train_set = SpanLabeledTextDataset(
+        texts, list_of_spans, tokenizer,
+        cls_token_at_end=model_type in ['xlnet'],
+        cls_token_segment_id=2 if model_type in ['xlnet'] else 0,
+        sep_token_extra=model_type in ['roberta'],
+        pad_token_label_id=pad_token_label_id
+    )
+
+    config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+    model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
 
     if dump_dataset:
         dataset_file = os.path.join(output_model_dir, 'train_set.txt')
         train_set.dump(dataset_file)
 
-    batch_padding = partial(
-        SpanLabeledTextDataset.pad_sequences,
-        mask_padding_with_zero=True,
-        pad_on_left=False,
-        pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
-        pad_token_segment_id=0,
-        pad_token_label_id=pad_token_label_id
-    )
+    batch_padding = SpanLabeledTextDataset.get_padding_function(model_type, tokenizer, pad_token_label_id)
 
     train_loader = DataLoader(
         dataset=train_set,
@@ -384,16 +433,12 @@ def train_ner(
         shuffle=True,
         collate_fn=batch_padding
     )
-    config = BertConfig.from_pretrained(pretrained_model, cache_dir=cache_dir)
-    config.num_labels = train_set.num_labels
 
-    model = BertForTokenClassification.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
-
-    no_decay = ["bias", "LayerNorm.weight"]
+    no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
-        {"params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-         "weight_decay": weight_decay},
-        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0}
+        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+         'weight_decay': weight_decay},
+        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
 
     num_training_steps = len(train_loader) * num_train_epochs
@@ -416,6 +461,9 @@ def train_ner(
                 'labels': batch['label_ids'],
                 'token_type_ids': batch['segment_ids']
             }
+            if model_type == 'distilbert':
+                inputs.pop('token_type_ids')
+
             model_output = model(**inputs)
             loss = model_output[0]
             loss.backward()
@@ -440,5 +488,8 @@ def train_ner(
         'model_path': output_model_dir,
         'batch_size': batch_size,
         'pad_token_label_id': pad_token_label_id,
+        'dataset_params_dict': train_set.get_params_dict(),
+        'model_type': model_type,
+        'pretrained_model': pretrained_model,
         'label_map': label_map
     }
