@@ -25,7 +25,7 @@ Put this file into the same directory `storage/label-studio` and also expose var
 3. **pretrained model**: use a pre-trained transformer from the [list](https://huggingface.co/models). 
 Create an environmental variable with the model:
     ```bash
-    export pretrained_model=bert_base_uncased
+    export pretrained_model=bert-base-uncased
     ```
 
 4. Start docker container:
