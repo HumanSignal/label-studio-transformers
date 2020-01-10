@@ -1,11 +1,17 @@
 # Label Studio bundle for Transformers
 
+[Website](https://labelstud.io/) • [Docs](https://labelstud.io/guide) • [Twitter](https://twitter.com/heartexlabs) • [Join Slack Community <img src="https://go.heartex.net/docs/images/slack-mini.png" width="18px"/>](https://docs.google.com/forms/d/e/1FAIpQLSdLHZx5EeT1J350JPwnY2xLanfmvplJi6VZk65C2R4XSsRBHg/viewform?usp=sf_link)
+
+<br/>
+
+**Train very powerful NLP models simply by annotating your textual data without any additional coding.**
+
 This package provides a ready-to-use container that links together:
 
 - [Label Studio](https://github.com/heartexlabs/label-studio) as annotation frontend
 - [Hugging Face's transformers](https://github.com/huggingface/transformers) as machine learning backend for NLP
 
-This allows you to learn very powerful NLP models simply by annotating your textual data without any additional coding.
+<br/>
 
 ### Usage
 
@@ -38,5 +44,9 @@ or use Label Studio API to send prediction request:
     ```bash
     curl -X POST -H 'Content-Type: application/json' -d '{"text": "Its National Donut Day."}' http://localhost:8200/predict
     ```
- 
-Happy labeling!
+
+## License
+
+This software is licensed under the [Apache 2.0 LICENSE](/LICENSE) © [Heartex](https://www.heartex.ai/). 2020
+
+<img src="https://github.com/heartexlabs/label-studio/blob/master/images/opossum_looking.png?raw=true" title="Hey everyone!" height="140" width="140" />
