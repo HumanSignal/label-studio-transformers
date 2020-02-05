@@ -4,14 +4,17 @@ services:
 
   label-studio:
     container_name: label-studio
-    image: label-studio:latest
-    build:
-      context: "https://github.com/heartexlabs/label-studio.git"
+    image: heartexlabs/label-studio:latest
     ports:
       - 8200:8200
-    command: -i ${input_data} -l ${config} -c /data/config/config.json
     volumes:
       - "./storage/label-studio:/data"
+    command: |-
+      label-studio start my_project --init --force
+      -l /data/labels.xml
+      --root-dir /data
+      --ml-backend-url http://model:9090
+      --ml-backend-name model
     links:
       - model
     depends_on:
@@ -27,12 +30,13 @@ services:
       - 6379:6379
 
   model:
-    container_name: model
+    container_name: label-studio-ml-backend
     environment:
-      - RQ_QUEUE_NAME=model
+      - RQ_QUEUE_NAME=label-studio
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - pretrained_model=${pretrained_model:-bert-base-uncased}
+      - model_dir=/data/model
       - cache_dir=/data/pretrained_model_cache
     image: model:latest
     build:

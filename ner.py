@@ -386,7 +386,6 @@ class TransformersBasedTagger(TextTagger):
         return results
 
 
-
 def train_ner(
     input_data, output_model_dir, model_type='bert', pretrained_model='bert-base-uncased',
     batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=3, weight_decay=0.0, logging_steps=10,
@@ -418,12 +417,12 @@ def train_ner(
         pad_token_label_id=pad_token_label_id
     )
 
-    config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
-    model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
-
     if dump_dataset:
         dataset_file = os.path.join(output_model_dir, 'train_set.txt')
         train_set.dump(dataset_file)
+
+    config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+    model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
 
     batch_padding = SpanLabeledTextDataset.get_padding_function(model_type, tokenizer, pad_token_label_id)
 

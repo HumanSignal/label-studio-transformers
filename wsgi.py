@@ -15,7 +15,8 @@ init_model_server(
     redis_host=os.environ.get('REDIS_HOST', 'localhost'),
     # here we pass the kwargs parameters to train script
     pretrained_model=os.environ.get('pretrained_model', 'bert-base-uncased'),
-    cache_dir=os.environ.get('cache_dir', '~/.heartex/cache')
+    cache_dir=os.environ.get('cache_dir', '/data/cache'),
+    model_dir=os.environ.get('model_dir', '/data/model'),
 )
 
 if __name__ == "__main__":
