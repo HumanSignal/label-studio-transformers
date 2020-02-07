@@ -11,6 +11,7 @@ from torch.nn import CrossEntropyLoss
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm, trange
 from tensorboardX import SummaryWriter
+from collections import deque
 
 from transformers import (
     BertTokenizer, BertForTokenClassification, BertConfig,
@@ -21,7 +22,6 @@ from transformers import (
 from transformers import AdamW, get_linear_schedule_with_warmup
 
 from htx.base_model import TextTagger
-
 
 ALL_MODELS = sum(
     [list(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)],
@@ -198,28 +198,48 @@ class SpanLabeledTextDataset(Dataset):
                 tags = []
                 for token, token_start in tokens:
                     token_end = token_start + len(token) - 1
+
+                    # token precedes current span
                     if not span or token_end < span['start']:
                         tags.append('O')
-                    elif token_start > span['end']:
-                        # this could happen if prev label ends with whitespaces, e.g. "cat " "too"
-                        # TODO: it is not right choice to place empty tag here in case when current token is covered by next span  # noqa
-                        tags.append('O')
-                    else:
-                        label = span['label']
-                        if label.startswith(prefix):
-                            tag = label
-                        else:
-                            tag = f'{prefix}{label}'
-                        tags.append(tag)
-                        if tag not in tag_idx_map:
-                            tag_idx_map[tag] = len(tag_idx_map)
-                        if span['end'] > token_end:
-                            prefix = 'I-'
-                        elif len(spans):
+                        continue
+
+                    # token jumps over the span (it could happens
+                    # when prev label ends with whitespaces, e.g. "cat " "too" or span created for whitespace)
+                    if token_start > span['end']:
+
+                        prefix = 'B-'
+                        no_more_spans = False
+                        while token_start > span['end']:
+                            if not len(spans):
+                                no_more_spans = True
+                                break
                             span = spans.pop(0)
-                            prefix = 'B-'
-                        else:
+
+                        if no_more_spans:
+                            tags.append('O')
                             span = None
+                            continue
+
+                        if token_end < span['start']:
+                            tags.append('O')
+                            continue
+
+                    label = span['label']
+                    if label.startswith(prefix):
+                        tag = label
+                    else:
+                        tag = f'{prefix}{label}'
+                    tags.append(tag)
+                    if tag not in tag_idx_map:
+                        tag_idx_map[tag] = len(tag_idx_map)
+                    if span['end'] > token_end:
+                        prefix = 'I-'
+                    elif len(spans):
+                        span = spans.pop(0)
+                        prefix = 'B-'
+                    else:
+                        span = None
             else:
                 tags = ['O'] * len(tokens)
 
@@ -364,7 +384,10 @@ class TransformersBasedTagger(TextTagger):
                 for label, group in groupby(zip(preds, starts, scores), key=lambda i: re.sub('^(B-|I-)', '', i[0])):
                     _, group_start, _ = list(group)[0]
                     if len(result) > 0:
-                        result[-1]['value']['end'] = group_start - 1
+                        if group_start == 0:
+                            result.pop(-1)
+                        else:
+                            result[-1]['value']['end'] = group_start - 1
                     if label != 'O':
                         result.append({
                             'from_name': from_name,
@@ -386,10 +409,22 @@ class TransformersBasedTagger(TextTagger):
         return results
 
 
+def calc_slope(y):
+    n = len(y)
+    if n == 1:
+        raise ValueError('Can\'t compute slope for array of length=1')
+    x_mean = (n + 1) / 2
+    x2_mean = (n + 1) * (2 * n + 1) / 6
+    xy_mean = np.average(y, weights=np.arange(1, n + 1))
+    y_mean = np.mean(y)
+    slope = (xy_mean - x_mean * y_mean) / (x2_mean - x_mean * x_mean)
+    return slope
+
+
 def train_ner(
     input_data, output_model_dir, model_type='bert', pretrained_model='bert-base-uncased',
-    batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=3, weight_decay=0.0, logging_steps=10,
-    warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache',
+    batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=100, weight_decay=0.0, logging_steps=1,
+    warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache', train_logs='/data/train_logs',
     **kwargs):
 
     cache_dir = os.path.expanduser(cache_dir)
@@ -447,8 +482,9 @@ def train_ner(
 
     tr_loss, logging_loss = 0, 0
     global_step = 0
-    tb_writer = SummaryWriter()
+    tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(output_model_dir)))
     epoch_iterator = trange(num_train_epochs, desc='Epoch')
+    loss_queue = deque(maxlen=10)
     for _ in epoch_iterator:
         batch_iterator = tqdm(train_loader, desc='Batch')
         for step, batch in enumerate(batch_iterator):
@@ -473,8 +509,17 @@ def train_ner(
             global_step += 1
             if global_step % logging_steps == 0:
                 tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                tb_writer.add_scalar('loss', (tr_loss - logging_loss) / logging_steps, global_step)
+                last_loss = (tr_loss - logging_loss) / logging_steps
+                loss_queue.append(last_loss)
+                tb_writer.add_scalar('loss', last_loss, global_step)
                 logging_loss = tr_loss
+
+        # slope-based early stopping
+        if len(loss_queue) == loss_queue.maxlen:
+            slope = calc_slope(loss_queue)
+            tb_writer.add_scalar('slope', slope, global_step)
+            if abs(slope) < 1e-2:
+                break
 
     tb_writer.close()
 

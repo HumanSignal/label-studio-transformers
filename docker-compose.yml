@@ -21,20 +21,20 @@ services:
       - model
 
   redis:
-    container_name: redis
+    container_name: redis-local
     image: redis:alpine
     hostname: redis
     volumes:
       - "./storage/redis:/data"
     ports:
-      - 6379:6379
+      - 6380:6380
 
   model:
     container_name: label-studio-ml-backend
     environment:
       - RQ_QUEUE_NAME=label-studio
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_PORT=6380
       - pretrained_model=${pretrained_model:-bert-base-uncased}
       - model_dir=/data/model
       - cache_dir=/data/pretrained_model_cache
