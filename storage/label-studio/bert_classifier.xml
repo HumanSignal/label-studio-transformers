@@ -1,0 +1,10 @@
+<View>
+  <Choices name="message_type" toName="text">
+    <Choice value="Question"></Choice>
+      <Choice value="Suggestion"></Choice>
+      <Choice value="Issue"></Choice>
+      <Choice value="Commit"></Choice>
+      <Choice value="Other"></Choice>
+  </Choices>
+  <Text name="text" value="$text"></Text>
+</View>

@@ -30,6 +30,20 @@ or use Label Studio API to send prediction request to deployed model:
 
 ### Advanced Usage
 
+#### Select specific task
+
+By default container starts with preconfigured BERT classifier model. You can change to another NLP task by specifying `APP` environmental variable, e.g. 
+
+```bash
+APP=ner docker-compose up --build
+```
+
+Available options are:
+
+`APP=bert_classifier` - BERT text classifier (default)
+
+`APP=ner` - Transformer-based named entity recognizer
+
 #### Select specific model
 You can set a pre-trained transformer model from the [list](https://huggingface.co/models):
 ```bash

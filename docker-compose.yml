@@ -1,51 +1,48 @@
 version: "3.5"
-
 services:
-
   label-studio:
     container_name: label-studio
     image: heartexlabs/label-studio:latest
     ports:
-      - 8200:8200
+      - ${LABEL_STUDIO_PORT}:80
     volumes:
       - "./storage/label-studio:/data"
     command: |-
-      label-studio start my_project --init --force
-      -l /data/labels.xml
+      label-studio start my_project -p 80 --init --force
+      -l /data/${APP}.xml
       --root-dir /data
-      --ml-backend-url http://model:9090
+      --ml-backend-url http://label-studio-ml-backend
       --ml-backend-name model
     links:
-      - model
+      - label-studio-ml-backend
     depends_on:
-      - model
-
-  redis:
+      - label-studio-ml-backend
+  redis-local:
     container_name: redis-local
     image: redis:alpine
     hostname: redis
     volumes:
-      - "./storage/redis:/data"
+      - "./storage/redis-local:/data"
     ports:
-      - 6380:6380
-
-  model:
+      - ${REDIS_PORT}:${REDIS_PORT}
+  label-studio-ml-backend:
     container_name: label-studio-ml-backend
     environment:
       - RQ_QUEUE_NAME=label-studio
-      - REDIS_HOST=redis
-      - REDIS_PORT=6380
+      - REDIS_HOST=redis-local
+      - REDIS_PORT=${REDIS_PORT}
+      - WSGI_APP=wsgi_${APP}
       - pretrained_model=${pretrained_model:-bert-base-uncased}
       - model_dir=/data/model
       - cache_dir=/data/pretrained_model_cache
-    image: model:latest
+    image: label-studio-ml-backend:latest
     build:
       context: .
     ports:
-      - 9090:9090
+      - ${ML_BACKEND_PORT}:80
     depends_on:
-      - redis
+      - redis-local
     links:
-      - redis
+      - redis-local
     volumes:
-      - "./storage/model:/data"
+      - "./storage/label-studio-ml-backend:/data"

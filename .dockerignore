@@ -16,3 +16,4 @@ docker-compose.yml
 tmp
 storage
 runs
+test_data

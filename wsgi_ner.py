@@ -1,7 +1,7 @@
 import os
 import argparse
 
-from ner import TransformersBasedTagger, train_ner
+from ner.ner import TransformersBasedTagger, train_ner
 from htx import app, init_model_server
 
 init_model_server(
