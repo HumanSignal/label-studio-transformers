@@ -22,9 +22,9 @@ This package provides a ready-to-use container that links together:
     docker-compose up
     ```
 
-2. Run `http://localhost:8200/` in browser, upload your data on [**Import** page](http://localhost:8200/import) and then do [**Labeling**](http://localhost:8200/).
+2. Run `http://localhost:8200/` in browser, upload your data on [**Import** page](http://localhost:8200/import) and then do [**Labeling**](http://localhost:8200/). (More details in [docs](https://labelstud.io/))
 
-3. Once you've finished, you can find all trained checkpoints in `storage/model/model` directory,
+3. Once you've finished, you can find all trained checkpoints in `storage/label-studio-ml-backend/model` directory,
 or use Label Studio API to send prediction request to deployed model:
     ```bash
     curl -X POST -H 'Content-Type: application/json' -d '{"text": "Its National Donut Day."}' http://localhost:8200/predict
