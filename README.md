@@ -13,6 +13,8 @@ This package provides a ready-to-use container that links together:
 
 <br/>
 
+![Codeless transfer learning with Transformers](https://raw.githubusercontent.com/heartexlabs/label-studio-transformers/master/images/codeless.png)
+
 ### Quick Usage
 
 1. Start docker container:
