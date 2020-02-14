@@ -13,7 +13,7 @@ This package provides a ready-to-use container that links together:
 
 <br/>
 
-![Codeless transfer learning with Transformers](https://raw.githubusercontent.com/heartexlabs/label-studio-transformers/master/images/codeless.png)
+[<img src="https://raw.githubusercontent.com/heartexlabs/label-studio-transformers/master/images/codeless.png" height="500">](https://github.com/heartexlabs/label-studio-transformers)
 
 ### Quick Usage
 
