@@ -22,7 +22,7 @@ This package provides a ready-to-use container that links together:
     docker-compose up
     ```
 
-2. Run `http://localhost:8200/` in browser, upload your data on [**Import** page](http://localhost:8200/import) and then do [**Labeling**](http://localhost:8200/). (More details in [docs](https://labelstud.io/))
+2. Run `http://localhost:8200/` in browser, upload your data on [**Import** page](http://localhost:8200/import) and then do [**Labeling**](http://localhost:8200/). (More details in [Label Studio docs](https://labelstud.io/))
 
 3. Once you've finished, you can find all trained checkpoints in `storage/label-studio-ml-backend/model` directory,
 or use Label Studio API to send prediction request to deployed model:
@@ -60,7 +60,7 @@ docker exec -it label-studio-ml-backend sh -c "tail -n100 /tmp/rq.log"
 
 #### Run tensorboard:
 ```bash
-tensorboard --logdir=storage/model/train_logs
+tensorboard --logdir=storage/label-studio-ml-backend/train_logs
 ```
 
 ## License
