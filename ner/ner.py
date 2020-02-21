@@ -17,7 +17,8 @@ from transformers import (
     BertTokenizer, BertForTokenClassification, BertConfig,
     RobertaConfig, RobertaForTokenClassification, RobertaTokenizer,
     DistilBertConfig, DistilBertForTokenClassification, DistilBertTokenizer,
-    CamembertConfig, CamembertForTokenClassification, CamembertTokenizer
+    CamembertConfig, CamembertForTokenClassification, CamembertTokenizer,
+    AutoConfig, AutoModelForTokenClassification, AutoTokenizer
 )
 from transformers import AdamW, get_linear_schedule_with_warmup
 
@@ -325,8 +326,10 @@ class TransformersBasedTagger(TextTagger):
         self._model_type = train_output['model_type']
         _, model_class, tokenizer_class = MODEL_CLASSES[train_output['model_type']]
 
-        self._tokenizer = tokenizer_class.from_pretrained(pretrained_model)
-        self._model = model_class.from_pretrained(pretrained_model)
+        # self._tokenizer = tokenizer_class.from_pretrained(pretrained_model)
+        # self._model = model_class.from_pretrained(pretrained_model)
+        self._tokenizer = AutoTokenizer.from_pretrained(pretrained_model)
+        self._model = AutoModelForTokenClassification.from_pretrained(pretrained_model)
         self._batch_size = train_output['batch_size']
         self._pad_token = self._tokenizer.convert_tokens_to_ids([self._tokenizer.pad_token])[0]
         self._pad_token_label_id = train_output['pad_token_label_id']
@@ -431,11 +434,15 @@ def train_ner(
     os.makedirs(cache_dir, exist_ok=True)
 
     model_type = model_type.lower()
-    assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
-    assert pretrained_model in ALL_MODELS, f'Pretrained model {pretrained_model} not in {ALL_MODELS}'
+    # assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
+    # assert pretrained_model in ALL_MODELS, f'Pretrained model {pretrained_model} not in {ALL_MODELS}'
+
+    tokenizer = AutoTokenizer.from_pretrained("TurkuNLP/bert-base-finnish-uncased-v1")
+    model = AutoModelForTokenClassification.from_pretrained("TurkuNLP/bert-base-finnish-uncased-v1")
 
     config_class, model_class, tokenizer_class = MODEL_CLASSES[model_type]
-    tokenizer = tokenizer_class.from_pretrained(pretrained_model, cache_dir=cache_dir)
+    # tokenizer = tokenizer_class.from_pretrained(pretrained_model, cache_dir=cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
 
     # read input data stream
     texts, list_of_spans = [], []
@@ -456,8 +463,10 @@ def train_ner(
         dataset_file = os.path.join(output_model_dir, 'train_set.txt')
         train_set.dump(dataset_file)
 
-    config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
-    model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
+    # config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+    config = AutoConfig.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+    # model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
+    model = AutoModelForTokenClassification.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
 
     batch_padding = SpanLabeledTextDataset.get_padding_function(model_type, tokenizer, pad_token_label_id)
 
@@ -482,7 +491,8 @@ def train_ner(
 
     tr_loss, logging_loss = 0, 0
     global_step = 0
-    tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(output_model_dir)))
+    if train_logs:
+        tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(output_model_dir)))
     epoch_iterator = trange(num_train_epochs, desc='Epoch')
     loss_queue = deque(maxlen=10)
     for _ in epoch_iterator:
@@ -508,20 +518,23 @@ def train_ner(
             model.zero_grad()
             global_step += 1
             if global_step % logging_steps == 0:
-                tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
                 last_loss = (tr_loss - logging_loss) / logging_steps
                 loss_queue.append(last_loss)
-                tb_writer.add_scalar('loss', last_loss, global_step)
+                if train_logs:
+                    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                    tb_writer.add_scalar('loss', last_loss, global_step)
                 logging_loss = tr_loss
 
         # slope-based early stopping
         if len(loss_queue) == loss_queue.maxlen:
             slope = calc_slope(loss_queue)
-            tb_writer.add_scalar('slope', slope, global_step)
+            if train_logs:
+                tb_writer.add_scalar('slope', slope, global_step)
             if abs(slope) < 1e-2:
                 break
 
-    tb_writer.close()
+    if train_logs:
+        tb_writer.close()
 
     model_to_save = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
     model_to_save.save_pretrained(output_model_dir)

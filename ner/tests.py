@@ -1,6 +1,6 @@
 import os
 
-from ner import SpanLabeledTextDataset
+from ner import SpanLabeledTextDataset, train_ner
 from transformers import BertTokenizer
 
 
@@ -78,5 +78,14 @@ def test_span_labeled_text_dataset():
     print(s)
 
 
+def test_train():
+    text, spans = data_for_test_2()
+    input_data = [{'input': [text], 'output': spans}]
+    output_dir = os.path.join(os.path.dirname(__file__), 'test_out')
+    os.makedirs(output_dir, exist_ok=True)
+    train_ner(input_data, output_dir, pretrained_model='bert-base-multilingual-cased', train_logs=None)
+
+
 if __name__ == "__main__":
-    test_span_labeled_text_dataset()
+    # test_span_labeled_text_dataset()
+    test_train()
