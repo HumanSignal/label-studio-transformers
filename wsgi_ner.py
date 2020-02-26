@@ -1,8 +1,8 @@
 import os
-import argparse
 
-from ner.ner import TransformersBasedTagger, train_ner
 from htx import app, init_model_server
+from ner.ner import TransformersBasedTagger, train_ner
+
 
 init_model_server(
     # refer to class definition that inherits htx.BaseModel and implements load() and predict() methods
@@ -18,9 +18,3 @@ init_model_server(
     cache_dir=os.environ.get('cache_dir', '/data/cache'),
     model_dir=os.environ.get('model_dir', '/data/model'),
 )
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port', dest='port', default='9090')
-    args = parser.parse_args()
-    app.run(host='localhost', port=args.port, debug=True)
