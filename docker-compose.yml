@@ -7,9 +7,8 @@ services:
       - ${LABEL_STUDIO_PORT}:8200
     volumes:
       - ./storage/label-studio:/data
-      - ./wait-for-it.sh:/label-studio/wait-for-it.sh
     command: |-
-      ./wait-for-it.sh label-studio-ml-backend:9090 --
+      ./scripts/wait-for-it.sh label-studio-ml-backend:9090 --
       label-studio start my_project -p 8200 --init --force
       -l /data/${APP}.xml
       --root-dir /data
