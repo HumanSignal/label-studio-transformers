@@ -17,7 +17,7 @@ from torch import nn, no_grad
 from torchvision import models, transforms
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-
+from contextlib import contextmanager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ class ImageClassifierDataset(Dataset):
         try:
             image_data = Image.open(filepath).convert('RGB')
         except Exception as e:
-            logger.error(filepath + ' :: ' + str(e))
+            logger.error(str(filepath) + ' :: ' + str(e))
             return None
         logger.info('Step 2')
         preprocessed_image_data = preprocessing(image_data)
@@ -126,10 +126,11 @@ class ImageClassifierModel(object):
         X, y = [], []
         with no_grad():
             for batch_inputs, batch_outputs in dataloader:
-                batch_X = resnet(batch_inputs)
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                batch_X = resnet(batch_inputs).to(device)
                 batch_X = torch.reshape(batch_X, (batch_X.size(0), batch_X.size(1)))
-                X.append(batch_X.data.numpy())
-                y.append(batch_outputs.data.numpy())
+                X.append(batch_X.data.cpu().numpy())
+                y.append(batch_outputs.data.cpu().numpy())
 
         X = np.vstack(X)
         y = np.hstack(y)
@@ -148,11 +149,12 @@ class ImageClassifierModel(object):
         preprocessed_images = torch.stack(preprocessed_images)
         logger.info('Step X2')
         with no_grad():
-            tensor_X = resnet(preprocessed_images)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            tensor_X = resnet(preprocessed_images).to(device)
             logger.info('Step X3')
             tensor_X = torch.reshape(tensor_X, (tensor_X.size(0), tensor_X.size(1)))
             logger.info('Step X4')
-            X = tensor_X.data.numpy()
+            X = tensor_X.cpu().data.numpy()
             logger.info('Step X5')
         return self._model.predict_proba(X)
 
