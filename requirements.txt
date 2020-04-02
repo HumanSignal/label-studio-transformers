@@ -1,4 +1,6 @@
 torch==1.4.0
-transformers==2.4.1
-pyheartex==0.0.2
-tensorboardX==1.9
+torchvision>=0.2.3
+Pillow<7
+scikit-learn==0.20.3
+requests==2.22.0
+git+https://github.com/heartexlabs/pyheartex.git@master#egg=htx

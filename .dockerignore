@@ -11,6 +11,8 @@ env.*
 devops
 __pycache__
 docker-compose.yml
+env3
+image_classifier/env3
 
 # To prevent storing dev/temporary container data, local storage & runs
 tmp
