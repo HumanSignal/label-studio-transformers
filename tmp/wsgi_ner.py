@@ -1,7 +1,7 @@
 import os
 
-from htx import app, init_model_server
-from ner.ner import TransformersBasedTagger, train_ner
+from htx import init_model_server
+from tmp.ner.ner import TransformersBasedTagger, train_ner
 
 
 init_model_server(

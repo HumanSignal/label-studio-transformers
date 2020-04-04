@@ -1,6 +1,5 @@
 FROM python:3.7
-RUN pip install uwsgi
-RUN pip install supervisor
+RUN pip install uwsgi supervisor
 EXPOSE 9090
 WORKDIR /app
 COPY requirements.txt /app/

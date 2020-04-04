@@ -1,8 +1,8 @@
 import os
 
-from htx import app, init_model_server
-from bert_classifier.train import train_classifier
-from bert_classifier.serve import LabelStudioTransformersClassifier
+from htx import init_model_server
+from tmp.bert_classifier import train_classifier
+from tmp.bert_classifier.serve import LabelStudioTransformersClassifier
 
 
 init_model_server(

@@ -1,6 +1,6 @@
 import os
 
-from ner import SpanLabeledTextDataset, train_ner
+from tmp.ner import SpanLabeledTextDataset, train_ner
 from transformers import BertTokenizer
 
 

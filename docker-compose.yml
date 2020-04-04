@@ -9,15 +9,15 @@ services:
       - ./storage/label-studio:/data
     command: |-
       ./scripts/wait-for-it.sh label-studio-ml-backend:9090 --
-      label-studio start /data/my_project -p 8200 --init --force
-      -l /data/${APP}.xml \
-      --ml-backend-url http://192.168.1.64:9090 \
+      label-studio start my_project -p 8200 --init --force
+      -l /data/${APP}.xml
+      --ml-backend-url http://label-studio-ml-backend:9090
       --ml-backend-name my_model
     links:
-      - label-studio-ml-backendcd 
+      - label-studio-ml-backend
     depends_on:
       - label-studio-ml-backend
-  redis-local:cd 
+  redis-local:
     container_name: redis-local
     image: redis:alpine
     hostname: redis
@@ -37,7 +37,7 @@ services:
       - cache_dir=/data/pretrained_model_cache
     image: label-studio-ml-backend:latest
     build:
-      context: .
+      context: image_classifier
       shm_size: '32gb'
     ports:
       - ${ML_BACKEND_PORT}:9090

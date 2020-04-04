@@ -6,7 +6,7 @@ from htx.base_model import SingleClassTextClassifier
 from transformers import BertTokenizer, BertForSequenceClassification
 from torch.utils.data import SequentialSampler
 
-from bert_classifier.train import prepare_texts
+from tmp.bert_classifier import prepare_texts
 
 
 device = 'cpu'
