@@ -1,7 +1,0 @@
-<View>
-  <Image name="img" value="$url"/>
-  <Choices name="choice" toName="img" showInLine="true">
-    <Choice value="Linus" background="blue"/>
-    <Choice value="Not Linus" background="green" />
-  </Choices>
-</View>

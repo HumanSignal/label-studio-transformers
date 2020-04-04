@@ -5,7 +5,7 @@ import argparse
 logging.basicConfig(level=logging.INFO)
 
 from htx import app, init_model_server
-from image_classifier.image_classifier import ResnetSklearnImageClassifier
+from image_classifier import ResnetSklearnImageClassifier
 
 init_model_server(
     create_model_func=ResnetSklearnImageClassifier,
