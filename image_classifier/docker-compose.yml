@@ -2,7 +2,7 @@ version: "3.5"
 services:
   label-studio:
     container_name: label-studio
-    image: heartexlabs/label-studio:latest
+    image: heartexlabs/label-studio:linus
     ports:
       - ${LABEL_STUDIO_PORT}:8200
     volumes:
