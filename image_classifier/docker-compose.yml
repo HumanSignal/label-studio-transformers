@@ -7,8 +7,6 @@ services:
       - ${LABEL_STUDIO_PORT}:8200
     volumes:
       - ./storage/label-studio/:/data
-    build:
-      context: "/ls"
     command: |-
       ./scripts/wait-for-it.sh label-studio-ml-backend:9090 --
       label-studio start /data/image_classifier -p 8200
