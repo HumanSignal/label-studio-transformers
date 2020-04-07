@@ -52,6 +52,10 @@ class ImageClassifierDataset(Dataset):
     @classmethod
     def _download_file(cls, url, filepath, login=None, password=None):
         logger.info(f'Downloading {url} to {filepath}')
+        url = url.replace('localhost', 'label-studio')
+        if url.startswith('/upload/'):
+            url = url.replace('/upload/', 'http://label-studio:8200/upload/')
+
         try:
             if url.startswith('/'):
                 url = DEFAULT_HOSTNAME + url

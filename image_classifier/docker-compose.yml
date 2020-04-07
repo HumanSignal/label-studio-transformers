@@ -6,17 +6,22 @@ services:
     ports:
       - ${LABEL_STUDIO_PORT}:8200
     volumes:
-      - ./storage/label-studio:/data
+      - ./storage/label-studio/:/data
+    build:
+      context: "/ls"
     command: |-
       ./scripts/wait-for-it.sh label-studio-ml-backend:9090 --
-      label-studio start my_project -p 8200 --init --force
-      -l /data/${APP}.xml
+      label-studio start /data/image_classifier -p 8200
+      -l /data/image_classifier.xml
       --ml-backend-url http://label-studio-ml-backend:9090
-      --ml-backend-name my_model
+      --ml-backend-name image_classifier
     links:
       - label-studio-ml-backend
     depends_on:
       - label-studio-ml-backend
+    networks:
+      - my-net
+
   redis-local:
     container_name: redis-local
     image: redis:alpine
@@ -25,25 +30,34 @@ services:
       - "./storage/redis-local:/data"
     ports:
       - ${REDIS_PORT}:${REDIS_PORT}
+    networks:
+      - my-net
+
   label-studio-ml-backend:
     container_name: label-studio-ml-backend
     environment:
       - RQ_QUEUE_NAME=label-studio
       - REDIS_HOST=redis-local
       - REDIS_PORT=${REDIS_PORT}
-      - WSGI_APP=wsgi_${APP}
+      - WSGI_APP=wsgi_image_classifier
       - pretrained_model=${pretrained_model:-bert-base-uncased}
-      - model_dir=/data/model
+      - model_dir=/data/image_classifier
       - cache_dir=/data/pretrained_model_cache
     image: label-studio-ml-backend:latest
     build:
-      context: image_classifier
+      context: ""
       shm_size: '32gb'
     ports:
       - ${ML_BACKEND_PORT}:9090
     depends_on:
       - redis-local
-    links:
-      - redis-local
+    networks:
+        - my-net
     volumes:
-      - "./storage/label-studio-ml-backend:/data"
+      - "./storage/label-studio-ml-backend/:/data"
+      - "./storage/root/:/root"
+      - "./storage/torch/models/:/root/.torch/models"
+
+networks:
+  my-net:
+    driver: bridge

@@ -1,5 +1,5 @@
 torch==1.0.1.post2
-torchvision>=0.2.3
+torchvision==0.2.2.post3
 Pillow<7
 scikit-learn==0.20.3
 requests==2.22.0
