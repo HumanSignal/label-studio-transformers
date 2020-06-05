@@ -3,6 +3,7 @@ import numpy as np
 import re
 import os
 import io
+import logging
 
 from functools import partial
 from itertools import groupby
@@ -22,7 +23,12 @@ from transformers import (
 )
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from htx.base_model import TextTagger
+from label_studio.ml import LabelStudioMLBase
+from utils import calc_slope
+
+
+logger = logging.getLogger(__name__)
+
 
 ALL_MODELS = sum(
     [list(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)],
@@ -319,15 +325,32 @@ class SpanLabeledTextDataset(Dataset):
         )
 
 
-class TransformersBasedTagger(TextTagger):
+class TransformersBasedTagger(LabelStudioMLBase):
+
+    def __init__(self, **kwargs):
+        super(TransformersBasedTagger, self).__init__(**kwargs)
+
+        assert len(self.parsed_label_config) == 1
+        self.from_name, self.info = list(self.parsed_label_config.items())[0]
+        assert self.info['type'] == 'Labels'
+
+        # the model has only one textual input
+        assert len(self.info['to_name']) == 1
+        assert len(self.info['inputs']) == 1
+        assert self.info['inputs'][0]['type'] == 'Text'
+        self.to_name = self.info['to_name'][0]
+        self.value = self.info['inputs'][0]['value']
+
+        if not self.train_output:
+            self.labels = self.info['labels']
+        else:
+            self.load(self.train_output)
 
     def load(self, train_output):
         pretrained_model = train_output['model_path']
         self._model_type = train_output['model_type']
         _, model_class, tokenizer_class = MODEL_CLASSES[train_output['model_type']]
 
-        # self._tokenizer = tokenizer_class.from_pretrained(pretrained_model)
-        # self._model = model_class.from_pretrained(pretrained_model)
         self._tokenizer = AutoTokenizer.from_pretrained(pretrained_model)
         self._model = AutoModelForTokenClassification.from_pretrained(pretrained_model)
         self._batch_size = train_output['batch_size']
@@ -341,10 +364,10 @@ class TransformersBasedTagger(TextTagger):
             self._model_type, self._tokenizer, self._pad_token_label_id)
 
     def predict(self, tasks, **kwargs):
-        texts = list(map(lambda i: i['input'][0], tasks))
+        texts = [task['data'][self.value] for task in tasks]
         predict_set = SpanLabeledTextDataset(texts, tokenizer=self._tokenizer, **self._dataset_params_dict)
-        from_name = self.output_names[0]
-        to_name = self.input_names[0]
+        from_name = self.from_name
+        to_name = self.to_name
         predict_loader = DataLoader(
             dataset=predict_set,
             batch_size=self._batch_size,
@@ -411,142 +434,148 @@ class TransformersBasedTagger(TextTagger):
                 })
         return results
 
+    def get_spans(self, completion):
+        spans = []
+        for r in completion['result']:
+            if r['from_name'] == self.from_name and r['to_name'] == self.to_name:
+                labels = r['value'].get('labels')
+                if not isinstance(labels, list) or len(labels) == 0:
+                    logger.warning(f'Error while parsing {r}: list type expected for "labels"')
+                    continue
+                label = labels[0]
+                start, end = r['value'].get('start'), r['value'].get('end')
+                if start is None or end is None:
+                    logger.warning(f'Error while parsing {r}: "labels" should contain "start" and "end" fields')
+                spans.append({
+                    'label': label,
+                    'start': start,
+                    'end': end
+                })
+        return spans
 
-def calc_slope(y):
-    n = len(y)
-    if n == 1:
-        raise ValueError('Can\'t compute slope for array of length=1')
-    x_mean = (n + 1) / 2
-    x2_mean = (n + 1) * (2 * n + 1) / 6
-    xy_mean = np.average(y, weights=np.arange(1, n + 1))
-    y_mean = np.mean(y)
-    slope = (xy_mean - x_mean * y_mean) / (x2_mean - x_mean * x_mean)
-    return slope
+    def fit(
+        self, completions, workdir=None, model_type='bert', pretrained_model='bert-base-uncased',
+        batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=100, weight_decay=0.0, logging_steps=1,
+        warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache', train_logs=None,
+        **kwargs
+    ):
+        train_logs = train_logs or os.path.join(workdir, 'train_logs')
+        os.makedirs(train_logs, exist_ok=True)
+        logger.debug('Prepare models')
+        cache_dir = os.path.expanduser(cache_dir)
+        os.makedirs(cache_dir, exist_ok=True)
 
+        model_type = model_type.lower()
+        # assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
+        # assert pretrained_model in ALL_MODELS, f'Pretrained model {pretrained_model} not in {ALL_MODELS}'
 
-def train_ner(
-    input_data, output_model_dir, model_type='bert', pretrained_model='bert-base-uncased',
-    batch_size=32, learning_rate=5e-5, adam_epsilon=1e-8, num_train_epochs=100, weight_decay=0.0, logging_steps=1,
-    warmup_steps=0, save_steps=50, dump_dataset=True, cache_dir='~/.heartex/cache', train_logs='/data/train_logs',
-    **kwargs):
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
 
-    cache_dir = os.path.expanduser(cache_dir)
-    os.makedirs(cache_dir, exist_ok=True)
+        logger.debug('Read data')
+        # read input data stream
+        texts, list_of_spans = [], []
+        for item in completions:
+            texts.append(item['data'][self.value])
+            list_of_spans.append(self.get_spans(item['completions'][0]))
 
-    model_type = model_type.lower()
-    # assert model_type in MODEL_CLASSES.keys(), f'Input model type {model_type} not in {MODEL_CLASSES.keys()}'
-    # assert pretrained_model in ALL_MODELS, f'Pretrained model {pretrained_model} not in {ALL_MODELS}'
+        logger.debug('Prepare dataset')
+        pad_token_label_id = CrossEntropyLoss().ignore_index
+        train_set = SpanLabeledTextDataset(
+            texts, list_of_spans, tokenizer,
+            cls_token_at_end=model_type in ['xlnet'],
+            cls_token_segment_id=2 if model_type in ['xlnet'] else 0,
+            sep_token_extra=model_type in ['roberta'],
+            pad_token_label_id=pad_token_label_id
+        )
 
-    tokenizer = AutoTokenizer.from_pretrained("TurkuNLP/bert-base-finnish-uncased-v1")
-    model = AutoModelForTokenClassification.from_pretrained("TurkuNLP/bert-base-finnish-uncased-v1")
+        if dump_dataset:
+            dataset_file = os.path.join(workdir, 'train_set.txt')
+            train_set.dump(dataset_file)
 
-    config_class, model_class, tokenizer_class = MODEL_CLASSES[model_type]
-    # tokenizer = tokenizer_class.from_pretrained(pretrained_model, cache_dir=cache_dir)
-    tokenizer = AutoTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
+        # config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+        config = AutoConfig.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
+        # model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
+        model = AutoModelForTokenClassification.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
 
-    # read input data stream
-    texts, list_of_spans = [], []
-    for item in input_data:
-        texts.append(item['input'][0])
-        list_of_spans.append(item['output'])
+        batch_padding = SpanLabeledTextDataset.get_padding_function(model_type, tokenizer, pad_token_label_id)
 
-    pad_token_label_id = CrossEntropyLoss().ignore_index
-    train_set = SpanLabeledTextDataset(
-        texts, list_of_spans, tokenizer,
-        cls_token_at_end=model_type in ['xlnet'],
-        cls_token_segment_id=2 if model_type in ['xlnet'] else 0,
-        sep_token_extra=model_type in ['roberta'],
-        pad_token_label_id=pad_token_label_id
-    )
+        train_loader = DataLoader(
+            dataset=train_set,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=batch_padding
+        )
 
-    if dump_dataset:
-        dataset_file = os.path.join(output_model_dir, 'train_set.txt')
-        train_set.dump(dataset_file)
+        no_decay = ['bias', 'LayerNorm.weight']
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
+             'weight_decay': weight_decay},
+            {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
 
-    # config = config_class.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
-    config = AutoConfig.from_pretrained(pretrained_model, num_labels=train_set.num_labels, cache_dir=cache_dir)
-    # model = model_class.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
-    model = AutoModelForTokenClassification.from_pretrained(pretrained_model, config=config, cache_dir=cache_dir)
+        num_training_steps = len(train_loader) * num_train_epochs
+        optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_epsilon)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
 
-    batch_padding = SpanLabeledTextDataset.get_padding_function(model_type, tokenizer, pad_token_label_id)
+        tr_loss, logging_loss = 0, 0
+        global_step = 0
+        if train_logs:
+            tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(workdir)))
+        epoch_iterator = trange(num_train_epochs, desc='Epoch')
+        loss_queue = deque(maxlen=10)
+        for _ in epoch_iterator:
+            batch_iterator = tqdm(train_loader, desc='Batch')
+            for step, batch in enumerate(batch_iterator):
 
-    train_loader = DataLoader(
-        dataset=train_set,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=batch_padding
-    )
+                model.train()
+                inputs = {
+                    'input_ids': batch['input_ids'],
+                    'attention_mask': batch['input_mask'],
+                    'labels': batch['label_ids'],
+                    'token_type_ids': batch['segment_ids']
+                }
+                if model_type == 'distilbert':
+                    inputs.pop('token_type_ids')
 
-    no_decay = ['bias', 'LayerNorm.weight']
-    optimizer_grouped_parameters = [
-        {'params': [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-         'weight_decay': weight_decay},
-        {'params': [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-    ]
+                model_output = model(**inputs)
+                loss = model_output[0]
+                loss.backward()
+                tr_loss += loss.item()
+                optimizer.step()
+                scheduler.step()
+                model.zero_grad()
+                global_step += 1
+                if global_step % logging_steps == 0:
+                    last_loss = (tr_loss - logging_loss) / logging_steps
+                    loss_queue.append(last_loss)
+                    if train_logs:
+                        tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar('loss', last_loss, global_step)
+                    logging_loss = tr_loss
 
-    num_training_steps = len(train_loader) * num_train_epochs
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=adam_epsilon)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=warmup_steps, num_training_steps=num_training_steps)
-
-    tr_loss, logging_loss = 0, 0
-    global_step = 0
-    if train_logs:
-        tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(output_model_dir)))
-    epoch_iterator = trange(num_train_epochs, desc='Epoch')
-    loss_queue = deque(maxlen=10)
-    for _ in epoch_iterator:
-        batch_iterator = tqdm(train_loader, desc='Batch')
-        for step, batch in enumerate(batch_iterator):
-
-            model.train()
-            inputs = {
-                'input_ids': batch['input_ids'],
-                'attention_mask': batch['input_mask'],
-                'labels': batch['label_ids'],
-                'token_type_ids': batch['segment_ids']
-            }
-            if model_type == 'distilbert':
-                inputs.pop('token_type_ids')
-
-            model_output = model(**inputs)
-            loss = model_output[0]
-            loss.backward()
-            tr_loss += loss.item()
-            optimizer.step()
-            scheduler.step()
-            model.zero_grad()
-            global_step += 1
-            if global_step % logging_steps == 0:
-                last_loss = (tr_loss - logging_loss) / logging_steps
-                loss_queue.append(last_loss)
+            # slope-based early stopping
+            if len(loss_queue) == loss_queue.maxlen:
+                slope = calc_slope(loss_queue)
                 if train_logs:
-                    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-                    tb_writer.add_scalar('loss', last_loss, global_step)
-                logging_loss = tr_loss
+                    tb_writer.add_scalar('slope', slope, global_step)
+                if abs(slope) < 1e-2:
+                    break
 
-        # slope-based early stopping
-        if len(loss_queue) == loss_queue.maxlen:
-            slope = calc_slope(loss_queue)
-            if train_logs:
-                tb_writer.add_scalar('slope', slope, global_step)
-            if abs(slope) < 1e-2:
-                break
+        if train_logs:
+            tb_writer.close()
 
-    if train_logs:
-        tb_writer.close()
+        model_to_save = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
+        model_to_save.save_pretrained(workdir)
+        tokenizer.save_pretrained(workdir)
+        label_map = {i: t for t, i in train_set.tag_idx_map.items()}
 
-    model_to_save = model.module if hasattr(model, "module") else model  # Take care of distributed/parallel training
-    model_to_save.save_pretrained(output_model_dir)
-    tokenizer.save_pretrained(output_model_dir)
-    label_map = {i: t for t, i in train_set.tag_idx_map.items()}
-
-    return {
-        'model_path': output_model_dir,
-        'batch_size': batch_size,
-        'pad_token_label_id': pad_token_label_id,
-        'dataset_params_dict': train_set.get_params_dict(),
-        'model_type': model_type,
-        'pretrained_model': pretrained_model,
-        'label_map': label_map
-    }
+        return {
+            'model_path': workdir,
+            'batch_size': batch_size,
+            'pad_token_label_id': pad_token_label_id,
+            'dataset_params_dict': train_set.get_params_dict(),
+            'model_type': model_type,
+            'pretrained_model': pretrained_model,
+            'label_map': label_map
+        }

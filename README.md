@@ -17,51 +17,38 @@ This package provides a ready-to-use container that links together:
 
 ### Quick Usage
 
-1. Start docker container:
-    ```bash
-    docker-compose up
-    ```
-
-2. Run `http://localhost:8200/` in browser, upload your data on [**Import** page](http://localhost:8200/import) and then do [**Labeling**](http://localhost:8200/). (More details in [Label Studio docs](https://labelstud.io/))
-
-3. Once you've finished, you can find all trained checkpoints in `storage/label-studio-ml-backend/model` directory,
-or use Label Studio API to send prediction request to deployed model:
-    ```bash
-    curl -X POST -H 'Content-Type: application/json' -d '{"text": "Its National Donut Day."}' http://localhost:8200/predict
-    ```
-
-### Advanced Usage
-
-#### Select specific task
-
-By default container starts with preconfigured BERT classifier model. You can change to another NLP task by specifying `APP` environmental variable, e.g. 
+##### Install Label Studio and other dependencies
 
 ```bash
-APP=ner docker-compose up --build
+pip install -r requirements.txt
 ```
 
-Available options are:
-
-`APP=bert_classifier` - BERT text classifier (default)
-
-`APP=ner` - Transformer-based named entity recognizer
-
-#### Select specific model
-You can set a pre-trained transformer model from the [list](https://huggingface.co/models):
+##### Create ML backend with BERT classifier
 ```bash
-export pretrained_model=bert-base-uncased
+label-studio-ml init my-ml-backend --script models/bert_classifier.py
+cp models/utils.py my-ml-backend/utils.py
 ```
 
-#### View training logs
-View training logs in console:
+##### Create ML backend with BERT named entity recognizer
 ```bash
-docker exec -it label-studio-ml-backend sh -c "tail -n100 /tmp/rq.log"
+label-studio-ml init my-ml-backend --script models/ner.py
+cp models/utils.py my-ml-backend/utils.py
 ```
 
-#### Run tensorboard:
+##### Start ML backend at http://localhost:9090
 ```bash
-tensorboard --logdir=storage/label-studio-ml-backend/train_logs
+label-studio-ml start my-ml-backend
 ```
+
+##### Start Label Studio with ML backend connection
+```bash
+label-studio start my-annotation-project --init --ml-backend http://localhost:9090
+```
+
+The browser opens at `http://localhost:8080`. Upload your data on **Import** page then annotate by selecting **Labeling** page.
+Once you've annotate sufficient amount of data, go to **Model** page and press **Start Training** button. Once training is finished, model automatically starts serving for inference from Label Studio, and you'll find all model checkpoints inside `my-ml-backend/<ml-backend-id>/` directory.
+
+[Click here](https://labelstud.io/guide/ml.html) to read more about how to use Machine Learning backend and build Human-in-the-Loop pipelines with Label Studio
 
 ## License
 
