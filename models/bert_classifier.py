@@ -12,7 +12,7 @@ from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 
 from label_studio.ml import LabelStudioMLBase
 
-from .utils import pad_sequences, prepare_texts, calc_slope
+from utils import prepare_texts, calc_slope
 
 
 if torch.cuda.is_available():
