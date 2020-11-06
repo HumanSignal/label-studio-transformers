@@ -422,7 +422,8 @@ class TransformersBasedTagger(LabelStudioMLBase):
                             'value': {
                                 'labels': [label],
                                 'start': group_start,
-                                'end': None
+                                'end': None, 
+                                'text': '...'
                             }
                         })
                 if result and result[-1]['value']['end'] is None:
