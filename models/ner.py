@@ -23,7 +23,7 @@ from transformers import (
 )
 from transformers import AdamW, get_linear_schedule_with_warmup
 
-from label_studio.ml import LabelStudioMLBase
+from label_studio_ml.model import LabelStudioMLBase
 from utils import calc_slope
 
 
@@ -477,7 +477,7 @@ class TransformersBasedTagger(LabelStudioMLBase):
         texts, list_of_spans = [], []
         for item in completions:
             texts.append(item['data'][self.value])
-            list_of_spans.append(self.get_spans(item['completions'][0]))
+            list_of_spans.append(self.get_spans(item['annotations'][0]))
 
         logger.debug('Prepare dataset')
         pad_token_label_id = CrossEntropyLoss().ignore_index
