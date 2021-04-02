@@ -10,7 +10,7 @@ from transformers import BertTokenizer, BertForSequenceClassification
 from transformers import AdamW, get_linear_schedule_with_warmup
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler
 
-from label_studio.ml import LabelStudioMLBase
+from label_studio_ml.model import LabelStudioMLBase
 
 from utils import prepare_texts, calc_slope
 
@@ -26,8 +26,17 @@ else:
 
 class BertClassifier(LabelStudioMLBase):
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self, pretrained_model='bert-base-multilingual-cased', maxlen=64,
+        batch_size=32, num_epochs=100, logging_steps=1, train_logs=None, **kwargs
+    ):
         super(BertClassifier, self).__init__(**kwargs)
+        self.pretrained_model = pretrained_model
+        self.maxlen = maxlen
+        self.batch_size = batch_size
+        self.num_epochs = num_epochs
+        self.logging_steps = logging_steps
+        self.train_logs = train_logs
 
         # then collect all keys from config which will be used to extract data from task and to form prediction
         # Parsed label config contains only one output of <Choices> type
@@ -75,7 +84,15 @@ class BertClassifier(LabelStudioMLBase):
         self.labels = train_output['labels']
         self.maxlen = train_output['maxlen']
 
+    @property
+    def not_trained(self):
+        return not hasattr(self, 'tokenizer')
+
     def predict(self, tasks, **kwargs):
+        if self.not_trained:
+            print('Can\'t get prediction because model is not trained yet.')
+            return []
+
         texts = [task['data'][self.value] for task in tasks]
         predict_dataloader = prepare_texts(texts, self.tokenizer, self.maxlen, SequentialSampler, self.batch_size)
 
@@ -110,24 +127,21 @@ class BertClassifier(LabelStudioMLBase):
             predictions.append({'result': result, 'score': score})
         return predictions
 
-    def fit(
-        self, completions, workdir=None, cache_dir=None, pretrained_model='bert-base-multilingual-cased', maxlen=64,
-        batch_size=32, num_epochs=100, logging_steps=1, train_logs=None, **kwargs
-    ):
+    def fit(self, completions, workdir=None, cache_dir=None, **kwargs):
         input_texts = []
         output_labels, output_labels_idx = [], []
         label2idx = {l: i for i, l in enumerate(self.labels)}
         for completion in completions:
             # get input text from task data
 
-            if completion['completions'][0].get('skipped'):
+            if completion['annotations'][0].get('skipped'):
                 continue
 
             input_text = completion['data'][self.value]
             input_texts.append(input_text)
 
             # get an annotation
-            output_label = completion['completions'][0]['result'][0]['value']['choices'][0]
+            output_label = completion['annotations'][0]['result'][0]['value']['choices'][0]
             output_labels.append(output_label)
             output_label_idx = label2idx[output_label]
             output_labels_idx.append(output_label_idx)
@@ -140,20 +154,20 @@ class BertClassifier(LabelStudioMLBase):
             label2idx = {l: i for i, l in enumerate(self.labels)}
             output_labels_idx = [label2idx[label] for label in output_labels]
 
-        tokenizer = BertTokenizer.from_pretrained(pretrained_model, cache_dir=cache_dir)
+        tokenizer = BertTokenizer.from_pretrained(self.pretrained_model, cache_dir=cache_dir)
 
-        train_dataloader = prepare_texts(input_texts, tokenizer, maxlen, RandomSampler, batch_size, output_labels_idx)
-        model = self.reset_model(pretrained_model, cache_dir, device)
+        train_dataloader = prepare_texts(input_texts, tokenizer, self.maxlen, RandomSampler, self.batch_size, output_labels_idx)
+        model = self.reset_model(self.pretrained_model, cache_dir, device)
 
-        total_steps = len(train_dataloader) * num_epochs
+        total_steps = len(train_dataloader) * self.num_epochs
         optimizer = AdamW(model.parameters(), lr=2e-5, eps=1e-8)
         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
         global_step = 0
         total_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
-        train_iterator = trange(num_epochs, desc='Epoch')
-        if train_logs:
-            tb_writer = SummaryWriter(logdir=os.path.join(train_logs, os.path.basename(output_dir)))
+        train_iterator = trange(self.num_epochs, desc='Epoch')
+        if self.train_logs:
+            tb_writer = SummaryWriter(logdir=os.path.join(self.train_logs, os.path.basename(self.output_dir)))
         else:
             tb_writer = None
         loss_queue = deque(maxlen=10)
@@ -175,8 +189,8 @@ class BertClassifier(LabelStudioMLBase):
                 scheduler.step()
                 model.zero_grad()
                 global_step += 1
-                if global_step % logging_steps == 0:
-                    last_loss = (total_loss - logging_loss) / logging_steps
+                if global_step % self.logging_steps == 0:
+                    last_loss = (total_loss - logging_loss) / self.logging_steps
                     loss_queue.append(last_loss)
                     if tb_writer:
                         tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
@@ -200,8 +214,8 @@ class BertClassifier(LabelStudioMLBase):
 
         return {
             'model_path': workdir,
-            'batch_size': batch_size,
-            'maxlen': maxlen,
-            'pretrained_model': pretrained_model,
+            'batch_size': self.batch_size,
+            'maxlen': self.maxlen,
+            'pretrained_model': self.pretrained_model,
             'labels': self.labels
         }
