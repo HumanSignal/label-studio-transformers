@@ -30,10 +30,6 @@ from utils import calc_slope
 logger = logging.getLogger(__name__)
 
 
-ALL_MODELS = sum(
-    [list(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, RobertaConfig, DistilBertConfig)],
-    [])
-
 MODEL_CLASSES = {
     'bert': (BertConfig, BertForTokenClassification, BertTokenizer),
     'roberta': (RobertaConfig, RobertaForTokenClassification, RobertaTokenizer),
