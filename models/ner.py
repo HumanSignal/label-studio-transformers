@@ -332,7 +332,7 @@ class TransformersBasedTagger(LabelStudioMLBase):
 
         assert len(self.parsed_label_config) == 3
         self.from_name, self.info = list(self.parsed_label_config.items())[0]
-        assert self.info['type'] == 'Labels'
+        assert self.info['type'] == 'HyperTextLabels'
 
         # the model has only one textual input
         assert len(self.info['to_name']) == 1
