@@ -17,7 +17,7 @@ This package provides a ready-to-use container that links together:
 
 ### Quick Usage
 
-##### Install Label Studio and other dependencies
+#### Install Label Studio and other dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -27,23 +27,33 @@ pip install -r requirements.txt
 ```bash
 label-studio-ml init my-ml-backend --script models/bert_classifier.py
 cp models/utils.py my-ml-backend/utils.py
+
+# Start ML backend at http://localhost:9090
+label-studio-ml start my-ml-backend
+
+# Start Label Studio in the new terminal with the same python environment
+label-studio start
 ```
+
+1. Create a project with `Choices` and `Text` tags in the labeling config.
+2. Connect the ML backend in the Project settings with `http://localhost:9090`
 
 ##### Create ML backend with BERT named entity recognizer
 ```bash
 label-studio-ml init my-ml-backend --script models/ner.py
 cp models/utils.py my-ml-backend/utils.py
-```
 
-##### Start ML backend at http://localhost:9090
-```bash
+# Start ML backend at http://localhost:9090
 label-studio-ml start my-ml-backend
+
+# Start Label Studio in the new terminal with the same python environment
+label-studio start
 ```
 
-##### Start Label Studio with ML backend connection
-```bash
-label-studio start my-annotation-project --init --ml-backend http://localhost:9090
-```
+1. Create a project with `Labels` and `Text` tags in the labeling config.
+2. Connect the ML backend in the Project settings with `http://localhost:9090`
+
+#### Training and inference
 
 The browser opens at `http://localhost:8080`. Upload your data on **Import** page then annotate by selecting **Labeling** page.
 Once you've annotate sufficient amount of data, go to **Model** page and press **Start Training** button. Once training is finished, model automatically starts serving for inference from Label Studio, and you'll find all model checkpoints inside `my-ml-backend/<ml-backend-id>/` directory.
