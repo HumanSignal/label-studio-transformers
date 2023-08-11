@@ -1,5 +1,5 @@
 torch==1.13.1
-transformers==4.4.2
+transformers==4.30.0
 tensorboardX==1.9
 label-studio>=1.0.0
 git+git://github.com/heartexlabs/label-studio-ml-backend@master#egg=label-studio-ml
